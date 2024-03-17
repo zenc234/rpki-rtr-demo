@@ -36,7 +36,13 @@ sub new
 
     my $port = $args{'port'} || 323;
 
+    my $client_id = $args{'client_id'};
+    if ($client_id) {
+        die "Client id must be provided.";
+    }
+
     my $self = {
+        client_id             => $client_id,
         supported_versions    => \@svs,
         sv_lookup             => { map { $_ => 1 } @svs },
         max_supported_version => (max @svs),
@@ -224,8 +230,10 @@ sub _process_responses
         if ($changeset->can_add_pdu($pdu)) {
             $changeset->add_pdu($pdu);
         } elsif ($pdu->type() == 7) {
+            # End of data pdu received.
             return (1, $changeset, $pdu);
         } elsif ($pdu->type() == 10) {
+            # Error report pdu received.
             return (0, $changeset, $pdu);
         } elsif ($pdu->type() == 0) {
             $serial_notify = 1;

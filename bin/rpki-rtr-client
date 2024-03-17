@@ -49,9 +49,24 @@ sub error
     exit(10);
 }
 
+sub retrieve_client {
+    my ($data_dir, $client_id) = @_;
+
+    if ($client_id !~ /^\d+$/) {
+        die "Client id must be numeric.";
+    }
+
+    if (not -e "$data_dir/client$client_id.json") {
+        die "Invalid client id. $data_dir/client$client_id.json does not exist."
+    }
+
+    my $client_json = read_file("$dir/client$client_id.json");
+    return APNIC::RPKI::RTR::Client->deserialise_json($client_json);
+}
+
 sub main
 {
-    my ($dir, $op_name, @args) = @_;
+    my ($dir, $op_name, $client_id, @args) = @_;
 
     if (not $dir) {
         error("Data directory must be provided.");
@@ -66,60 +81,100 @@ sub main
     if (not $op_name) {
         error("Operation name not provided.");
     } elsif ($op_name eq 'init') {
-        my $server;
-        my $port;
-        my @supported_versions;
+        my @server_details;
+        # Arguments ('port', 'version') are grouped under the preceding 'server' argument.
         while (@args) {
             my $key = shift @args;
+
             if ($key eq '--server') {
-                $server = shift @args;
+                my $server = shift @args;
+
+                push @server_details, {
+                    'server' => $server,
+                };
             } elsif ($key eq '--port') {
-                $port = shift @args;
+                my $port = shift @args;
+
+                if ($#server_details < 0) {
+                    die "--server argument must be provided before --port.";
+                }
+
+                my $server_detail = $server_details[$#server_details];
+                $server_detail->{'port'} = $port;
+                $server_details[$#server_details] = $server_detail;
             } elsif ($key eq '--version') {
-                my @versions = split /,/, (shift @args);
-                push @supported_versions, @versions;
+                my $version = shift @args;
+
+                if ($#server_details < 0) {
+                    die "--server argument must be provided before --version.";
+                }
+
+                my $server_detail = $server_details[$#server_details];
+                my $versions = $server_detail->{'version'};
+
+                if ($versions and (scalar @$versions > 0)) {
+                    push @{$versions}, $version;
+                } else {
+                    $versions = [$version];
+                }
+                $server_detail->{'version'} = $versions;
+                $server_details[$#server_details] = $server_detail;
             } else {
                 error("Invalid argument '$key'");
             }
         }
-        if (not $server or not $port) {
-            error("Server and port must be provided.");
+
+        if ($#server_details < 0) {
+            die "At least one set of server and port arguments must be provided.";
         }
-        $version ||= 2;
 
-        my $client =
-            APNIC::RPKI::RTR::Client->new(
-                supported_versions => \@supported_versions,
-                server             => $server,
-                port               => $port,
-            );
+        for (my $i = 0; $i <= $#server_details; $i++) {
+            my $server_detail = $server_details[$i];
+            my $server = $server_detail->{'server'};
+            my $port = $server_detail->{'port'};
 
-        my $client_json = $client->serialise_json();
-        write_file("$dir/client.json", $client_json);
+            if (not $port) {
+                error("Port must be provided for $server.");
+            }
+
+            my $versions = $server_detail->{'versions'};
+            if (scalar @$versions <= 0) {
+                print "Version arguments are not provided. Use version 2 by default.\n";
+                $versions = [2];
+                $server_detail->{'versions'} = $versions;
+                $server_details[$i] = $server_detail;
+            }
+
+            my $client =
+                APNIC::RPKI::RTR::Client->new(
+                    client_id          => $client_id,
+                    supported_versions => $versions,
+                    server             => $server,
+                    port               => $port,
+                );
+
+            my $client_json = $client->serialise_json();
+            write_file("$dir/client$i.json", $client_json);
+        }
 
         return 1;
     } elsif ($op_name eq 'reset') {
-        my $client_json = read_file("$dir/client.json");
-        my $client =
-            APNIC::RPKI::RTR::Client->deserialise_json($client_json);
+        my $client = retrieve_client($dir, $client_id);
         my $force = grep { $_ eq '--force' } @args;
         $client->reset($force);
         $client_json = $client->serialise_json();
-        write_file("$dir/client.json", $client_json);
+        write_file("$dir/client$client_id.json", $client_json);
         return 1;
     } elsif ($op_name eq 'refresh') {
-        my $client_json = read_file("$dir/client.json");
-        my $client =
-            APNIC::RPKI::RTR::Client->deserialise_json($client_json);
+        my $client = retrieve_client($dir, $client_id);
         my $force = grep { $_ eq '--force' } @args;
         $client->refresh($force);
         $client_json = $client->serialise_json();
-        write_file("$dir/client.json", $client_json);
+        write_file("$dir/client$client_id.json", $client_json);
         return 1;
     } elsif ($op_name eq 'print') {
-        my $client_json = read_file("$dir/client.json");
-        my $client =
-            APNIC::RPKI::RTR::Client->deserialise_json($client_json);
+        my $client = retrieve_client($dir, $client_id);
+        print "Cache:             $dir/client$client_id.json";
         print "Server:            ".$client->{'server'}."\n";
         print "Port:              ".$client->{'port'}."\n";
         my $last_run_dt;
@@ -187,9 +242,7 @@ sub main
             print "No state available\n";
         }
     } elsif ($op_name eq 'aspa-validation') {
-        my $client_json = read_file("$dir/client.json");
-        my $client =
-            APNIC::RPKI::RTR::Client->deserialise_json($client_json);
+        my $client = retrieve_client($dir, $client_id);
 
         my $announcement;
         my $provider_asn_str;
@@ -223,9 +276,7 @@ sub main
             print "Invalid\n";
         }
     } elsif ($op_name eq 'route-origin-validation') {
-        my $client_json = read_file("$dir/client.json");
-        my $client =
-            APNIC::RPKI::RTR::Client->deserialise_json($client_json);
+        my $client = retrieve_client($dir, $client_id);
 
         my $asn;
         my $prefix;
