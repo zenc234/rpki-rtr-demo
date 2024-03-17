@@ -245,7 +245,7 @@ sub main
         }
 
         my $state = $client->{'state'};
-        APNIC::RPKI::Validator::ROA->validate($state, $asn, $prefix);
+        my $res = APNIC::RPKI::Validator::ROA->validate($state, $asn, $prefix);
 
         if ($res == ROV_UNKNOWN) {
             print "UNKOWN ROV for $asn $prefix.";
