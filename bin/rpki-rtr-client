@@ -78,6 +78,14 @@ sub main
         }
     }
 
+    # TODO: The client should keeps an open connection as per
+    # https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-12#name-operational-overview
+    # but the current implementation closes the connection once 'init',
+    # 'refresh' or 'reset' operation completes.
+    #
+    # When this is implemented, the client should fetches caches in the
+    # preference order.
+    # https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-12#name-router-cache-setup
     if (not $op_name) {
         error("Operation name not provided.");
     } elsif ($op_name eq 'init') {
