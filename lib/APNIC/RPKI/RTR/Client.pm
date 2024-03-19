@@ -37,12 +37,12 @@ sub new
     my $port = $args{'port'} || 323;
 
     my $client_id = $args{'client_id'};
-    if ($client_id) {
+    unless (defined $client_id) {
         die "Client id must be provided.";
     }
 
     my $self = {
-        client_id             => $client_id,
+        client_id             => "$client_id",
         supported_versions    => \@svs,
         sv_lookup             => { map { $_ => 1 } @svs },
         max_supported_version => (max @svs),
@@ -60,7 +60,8 @@ sub _init_socket
 {
     my ($self) = @_;
 
-    dprint("client: initialising socket");
+    my $client_id = $self->{'client_id'};
+    dprint("client $client_id: initialising socket");
     $self->_close_socket();
 
     my ($server, $port) = @{$self}{qw(server port)};
@@ -97,12 +98,13 @@ sub _close_socket
 {
     my ($self) = @_;
 
+    my $client_id = $self->{'client_id'};
     my $socket = $self->{'socket'};
     if ($socket) {
-        dprint("client: closing existing socket");
+        dprint("client $client_id: closing existing socket");
         $socket->close();
     } else {
-        dprint("client: no existing socket to close");
+        dprint("client $client_id: no existing socket to close");
     }
     delete $self->{'socket'};
 
@@ -113,7 +115,8 @@ sub _send_reset_query
 {
     my ($self, $version) = @_;
 
-    dprint("client: sending reset query");
+    my $client_id = $self->{'client_id'};
+    dprint("client $client_id: sending reset query");
     my $socket = $self->{'socket'};
     my $reset_query =
         APNIC::RPKI::RTR::PDU::ResetQuery->new(
@@ -127,7 +130,7 @@ sub _send_reset_query
     if ($res != length($data)) {
         die "Got unexpected send result for reset query: '$res' ($!)";
     }
-    dprint("client: sent reset query");
+    dprint("client $client_id: sent reset query");
 
     return $res;
 }
@@ -136,11 +139,12 @@ sub _send_serial_query
 {
     my ($self) = @_;
 
-    dprint("client: sending serial query");
+    my $client_id = $self->{'client_id'};
+    dprint("client $client_id: sending serial query");
     my $socket = $self->{'socket'};
     my $state = $self->{'state'};
-    dprint("client: session ID is '".$state->session_id()."'");
-    dprint("client: serial number is '".$state->{'serial_number'}."'");
+    dprint("client $client_id: session ID is '".$state->session_id()."'");
+    dprint("client $client_id: serial number is '".$state->{'serial_number'}."'");
     my $serial_query =
         APNIC::RPKI::RTR::PDU::SerialQuery->new(
             version       => $self->{'current_version'},
@@ -152,7 +156,7 @@ sub _send_serial_query
     if ($res != length($data)) {
         die "Got unexpected send result for serial query: '$res' ($!)";
     }
-    dprint("client: sent serial query");
+    dprint("client $client_id: sent serial query");
 
     return $res;
 }
@@ -161,14 +165,15 @@ sub _receive_cache_response
 {
     my ($self) = @_;
 
-    dprint("client: receiving cache response");
+    my $client_id = $self->{'client_id'};
+    dprint("client $client_id: receiving cache response");
     my $socket = $self->{'socket'};
     my $pdu = parse_pdu($socket);
 
     my $type = $pdu->type();
-    dprint("client: received PDU: ".$pdu->serialise_json());
+    dprint("client $client_id: received PDU: ".$pdu->serialise_json());
     if ($type == 3) {
-        dprint("client: received cache response PDU");
+        dprint("client $client_id: received cache response PDU");
         my $state = $self->{'state'};
         if ($state and ($pdu->session_id() != $state->{'session_id'})) {
             my $err_pdu =
@@ -182,7 +187,7 @@ sub _receive_cache_response
         delete $self->{'last_failure'};
         return $pdu;
     } elsif ($type == 10) {
-        dprint("client: received error response PDU");
+        dprint("client $client_id: received error response PDU");
         $self->{'last_failure'} = time();
         $self->_close_socket();
         if ($pdu->error_code() == 2) {  
@@ -195,7 +200,7 @@ sub _receive_cache_response
             die "Got error response: ".$pdu->serialise_json();
         }
     } else {
-        dprint("client: received unexpected PDU");
+        dprint("client $client_id: received unexpected PDU");
         $self->{'last_failure'} = time();
         die "Got unexpected PDU: ".$pdu->serialise_json();
     }
@@ -205,16 +210,18 @@ sub _process_responses
 {
     my ($self) = @_;
 
-    dprint("client: processing responses");
+    my $client_id = $self->{'client_id'};
+    dprint("client $client_id: processing responses");
 
     my $socket  = $self->{'socket'};
     my $changeset = APNIC::RPKI::RTR::Changeset->new();
     my $serial_notify = 0;
 
     for (;;) {
-        dprint("client: processing response");
+        dprint("client $client_id: processing response");
         my $pdu = parse_pdu($socket);
-        dprint("client: processing response: got PDU: ".$pdu->serialise_json());
+        dprint("client $client_id: processing response: got PDU: "
+            .$pdu->serialise_json());
         if ($pdu->version() != $self->{'current_version'}) {
             if ($pdu->type() == 10) {
                 die "client: got error PDU with unexpected version";
@@ -238,7 +245,7 @@ sub _process_responses
         } elsif ($pdu->type() == 0) {
             $serial_notify = 1;
         } elsif ($pdu->type() == 8) {
-            dprint("client: got cache reset PDU");
+            dprint("client $client_id: got cache reset PDU");
             return (0, $changeset, $pdu);
         } else {
             warn "Unexpected PDU";
@@ -260,7 +267,9 @@ sub reset
                 my $retry_interval = $eod->refresh_interval();
                 my $min_retry_time = $last_failure + $retry_interval;
                 if (time() < $min_retry_time) {
-                    dprint("client: not retrying, retry interval not reached");
+                    my $client_id = $self->{'client_id'};
+                    dprint("client $client_id: not retrying, " .
+                        "retry interval not reached");
                     return;
                 }
             }
@@ -317,6 +326,7 @@ sub refresh
 {
     my ($self, $force) = @_;
 
+    my $client_id = $self->{'client_id'};
     if (not $force) {
         my $last_failure = $self->{'last_failure'};
         my $eod = $self->{'eod'};
@@ -324,7 +334,8 @@ sub refresh
             my $retry_interval = $eod->refresh_interval();
             my $min_retry_time = $last_failure + $retry_interval;
             if (time() < $min_retry_time) {
-                dprint("client: not retrying, retry interval not reached");
+                dprint("client $client_id: not retrying, " .
+                    "retry interval not reached");
                 return;
             }
         }
@@ -333,7 +344,8 @@ sub refresh
             my $refresh_interval = $eod->refresh_interval();
             my $min_refresh_time = $last_run + $refresh_interval;
             if (time() < $min_refresh_time) {
-                dprint("client: not refreshing, refresh interval not reached");
+                dprint("client $client_id: not refreshing, " .
+                    "refresh interval not reached");
                 return;
             }
         }
@@ -391,7 +403,9 @@ sub reset_if_required
             $last_use_time = $last_failure + 3600;
         }
         if (time() > $last_use_time) {
-            dprint("client: removing state and resetting, reached expiry time");
+            my $client_id = $self->{'client_id'};
+            dprint("client $client_id: removing state and resetting, " .
+                "reached expiry time");
             delete $self->{'state'};
             delete $self->{'eod'};
             delete $self->{'last_run'};

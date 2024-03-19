@@ -60,13 +60,13 @@ sub retrieve_client {
         die "Invalid client id. $data_dir/client$client_id.json does not exist."
     }
 
-    my $client_json = read_file("$dir/client$client_id.json");
+    my $client_json = read_file("$data_dir/client$client_id.json");
     return APNIC::RPKI::RTR::Client->deserialise_json($client_json);
 }
 
 sub main
 {
-    my ($dir, $op_name, $client_id, @args) = @_;
+    my ($dir, $op_name, @args) = @_;
 
     if (not $dir) {
         error("Data directory must be provided.");
@@ -145,7 +145,7 @@ sub main
                 error("Port must be provided for $server.");
             }
 
-            my $versions = $server_detail->{'versions'};
+            my $versions = $server_detail->{'version'};
             if (scalar @$versions <= 0) {
                 print "Version arguments are not provided. Use version 2 by default.\n";
                 $versions = [2];
@@ -155,7 +155,7 @@ sub main
 
             my $client =
                 APNIC::RPKI::RTR::Client->new(
-                    client_id          => $client_id,
+                    client_id          => "$i",
                     supported_versions => $versions,
                     server             => $server,
                     port               => $port,
@@ -166,156 +166,163 @@ sub main
         }
 
         return 1;
-    } elsif ($op_name eq 'reset') {
-        my $client = retrieve_client($dir, $client_id);
-        my $force = grep { $_ eq '--force' } @args;
-        $client->reset($force);
-        $client_json = $client->serialise_json();
-        write_file("$dir/client$client_id.json", $client_json);
-        return 1;
-    } elsif ($op_name eq 'refresh') {
-        my $client = retrieve_client($dir, $client_id);
-        my $force = grep { $_ eq '--force' } @args;
-        $client->refresh($force);
-        $client_json = $client->serialise_json();
-        write_file("$dir/client$client_id.json", $client_json);
-        return 1;
-    } elsif ($op_name eq 'print') {
-        my $client = retrieve_client($dir, $client_id);
-        print "Cache:             $dir/client$client_id.json";
-        print "Server:            ".$client->{'server'}."\n";
-        print "Port:              ".$client->{'port'}."\n";
-        my $last_run_dt;
-        if (my $last_run = $client->{'last_run'}) {
-            $last_run_dt = DateTime->from_epoch($last_run);
-            print "Last run:          ".$last_run_dt->strftime('%F %T')."\n";
-        } else {
-            print "Last run:          N/A\n";
-        }
-        my $last_failure_dt;
-        if (my $last_failure = $client->{'last_failure'}) {
-            $last_failure_dt = DateTime->from_epoch($last_failure);
-            print "Last failure:      ".$last_failure_dt->strftime("%F %T")."\n";
-        } else {
-            print "Last failure:      N/A\n";
-        }
-        if (my $eod = $client->{'eod'}) {
-            my $ri  = $eod->refresh_interval();
-            my $rti = $eod->retry_interval();
-            my $exi = $eod->expire_interval();
-            print "Refresh interval:  $ri\n";
-            if ($last_run_dt) {
-                print "Next refresh time: ".$last_run_dt->clone()->add(seconds => $ri)->strftime('%F %T')."\n";
-            } else {
-                print "Next refresh time: N/A\n";
+    } else {
+        my $client;
+        my $client_id;
+        for (my $i = 0; $i <= $#args; $i++) {
+            my $key = $args[$i];
+
+            if ($key eq '--client_id' and $i < $#args) {
+                $client_id = $args[$i + 1];
+                $client = retrieve_client($dir, $client_id);
+                last;
             }
-            print "Retry interval:    $rti\n";
-            if ($last_failure_dt) {
-                print "Next retry time:   ".$last_failure_dt->clone()->add(seconds => $rti)->strftime('%F %T')."\n";
-            } else {
-                print "Next retry time:   N/A\n";
-            }
-            print "Expire interval:   $exi\n";
-            if ($last_run_dt) {
-                print "Expiry time:       ".$last_run_dt->clone()->add(seconds => $exi)->strftime('%F %T')."\n";
-            } else {
-                print "Expiry time:       N/A\n";
-            }
-        } else {
-            print "Refresh interval:  N/A\n";
-            print "Retry interval:    N/A\n";
-            print "Expire interval:   N/A\n";
         }
-        if (my $state = $client->{'state'}) {
-            my @pdus = $state->pdus();
-            print "State:\n";
-            for my $pdu (@pdus) {
-                my $type_str = $pdu->type_str();
-                if (($pdu->type() == 4) or ($pdu->type() == 6)) {
-                    my $str = $pdu->address()."/".
-                              $pdu->prefix_length()."-".
-                              $pdu->max_length()." => ".
-                              "AS".$pdu->asn();
-                    print " - $type_str: $str\n";
-                } elsif ($pdu->type() == 11) {
-                    my $customer_asn = $pdu->customer_asn();
-                    my @provider_asns = @{$pdu->provider_asns()};
-                    my $str = "AS$customer_asn => ".
-                              (join ', ',
-                               map { "AS$_" } @provider_asns);
-                    print " - $type_str: $str\n";
+
+        if ($op_name eq 'reset') {
+            my $force = grep { $_ eq '--force' } @args;
+            $client->reset($force);
+            my $client_json = $client->serialise_json();
+            write_file("$dir/client$client_id.json", $client_json);
+            return 1;
+        } elsif ($op_name eq 'refresh') {
+            my $force = grep { $_ eq '--force' } @args;
+            $client->refresh($force);
+            my $client_json = $client->serialise_json();
+            write_file("$dir/client$client_id.json", $client_json);
+            return 1;
+        } elsif ($op_name eq 'print') {
+            print "Cache:             $dir/client$client_id.json";
+            print "Server:            ".$client->{'server'}."\n";
+            print "Port:              ".$client->{'port'}."\n";
+            my $last_run_dt;
+            if (my $last_run = $client->{'last_run'}) {
+                $last_run_dt = DateTime->from_epoch($last_run);
+                print "Last run:          ".$last_run_dt->strftime('%F %T')."\n";
+            } else {
+                print "Last run:          N/A\n";
+            }
+            my $last_failure_dt;
+            if (my $last_failure = $client->{'last_failure'}) {
+                $last_failure_dt = DateTime->from_epoch($last_failure);
+                print "Last failure:      ".$last_failure_dt->strftime("%F %T")."\n";
+            } else {
+                print "Last failure:      N/A\n";
+            }
+            if (my $eod = $client->{'eod'}) {
+                my $ri  = $eod->refresh_interval();
+                my $rti = $eod->retry_interval();
+                my $exi = $eod->expire_interval();
+                print "Refresh interval:  $ri\n";
+                if ($last_run_dt) {
+                    print "Next refresh time: ".$last_run_dt->clone()->add(seconds => $ri)->strftime('%F %T')."\n";
+                } else {
+                    print "Next refresh time: N/A\n";
+                }
+                print "Retry interval:    $rti\n";
+                if ($last_failure_dt) {
+                    print "Next retry time:   ".$last_failure_dt->clone()->add(seconds => $rti)->strftime('%F %T')."\n";
+                } else {
+                    print "Next retry time:   N/A\n";
+                }
+                print "Expire interval:   $exi\n";
+                if ($last_run_dt) {
+                    print "Expiry time:       ".$last_run_dt->clone()->add(seconds => $exi)->strftime('%F %T')."\n";
+                } else {
+                    print "Expiry time:       N/A\n";
+                }
+            } else {
+                print "Refresh interval:  N/A\n";
+                print "Retry interval:    N/A\n";
+                print "Expire interval:   N/A\n";
+            }
+            if (my $state = $client->{'state'}) {
+                my @pdus = $state->pdus();
+                print "State:\n";
+                for my $pdu (@pdus) {
+                    my $type_str = $pdu->type_str();
+                    if (($pdu->type() == 4) or ($pdu->type() == 6)) {
+                        my $str = $pdu->address()."/".
+                            $pdu->prefix_length()."-".
+                            $pdu->max_length()." => ".
+                            "AS".$pdu->asn();
+                        print " - $type_str: $str\n";
+                    } elsif ($pdu->type() == 11) {
+                        my $customer_asn = $pdu->customer_asn();
+                        my @provider_asns = @{$pdu->provider_asns()};
+                        my $str = "AS$customer_asn => ".
+                            (join ', ',
+                                map { "AS$_" } @provider_asns);
+                        print " - $type_str: $str\n";
+                    }
+                }
+            } else {
+                print "No state available\n";
+            }
+        } elsif ($op_name eq 'aspa-validation') {
+            my $announcement;
+            my $provider_asn_str;
+            while (@args) {
+                my $key = shift @args;
+                if ($key eq '--announcement') {
+                    $announcement = shift @args;
+                } elsif ($key eq '--provider-asns') {
+                    $provider_asn_str = shift @args;
+                } else {
+                    error("Invalid argument '$key'");
                 }
             }
-        } else {
-            print "No state available\n";
-        }
-    } elsif ($op_name eq 'aspa-validation') {
-        my $client = retrieve_client($dir, $client_id);
-
-        my $announcement;
-        my $provider_asn_str;
-        while (@args) {
-            my $key = shift @args;
-            if ($key eq '--announcement') {
-                $announcement = shift @args;
-            } elsif ($key eq '--provider-asns') {
-                $provider_asn_str = shift @args;
-            } else {
-                error("Invalid argument '$key'");
+            if (not $announcement or not $provider_asn_str) {
+                error("Announcement and provider ASNs must be provided.");
             }
-        }
-        if (not $announcement or not $provider_asn_str) {
-            error("Announcement and provider ASNs must be provided.");
-        }
 
-        my %provider_asns =
-            map { $_ => 1 }
-                split /,/, $provider_asn_str;
+            my %provider_asns =
+                map { $_ => 1 }
+                    split /,/, $provider_asn_str;
 
-        my $state = $client->{'state'};
-        my $res = APNIC::RPKI::Validator::ASPA::validate(
-            $state, \%provider_asns, $announcement
-        );
-        if ($res == 2) {
-            print "Valid\n";
-        } elsif ($res == 1) {
-            print "Unknown\n";
-        } else {
-            print "Invalid\n";
-        }
-    } elsif ($op_name eq 'route-origin-validation') {
-        my $client = retrieve_client($dir, $client_id);
-
-        my $asn;
-        my $prefix;
-
-        while (@args) {
-            my $key = shift @args;
-            if ($key eq '--asn') {
-                $asn = shift @args;
-            } elsif ($key eq '--prefix') {
-                $prefix = shift @args;
+            my $state = $client->{'state'};
+            my $res = APNIC::RPKI::Validator::ASPA::validate(
+                $state, \%provider_asns, $announcement
+            );
+            if ($res == 2) {
+                print "Valid\n";
+            } elsif ($res == 1) {
+                print "Unknown\n";
             } else {
-                error("Invalid argument '$key'");
+                print "Invalid\n";
             }
-        }
-        if (not $asn or not $prefix) {
-            error("ASN and prefix must be provided.");
-        }
+        } elsif ($op_name eq 'route-origin-validation') {
+            my $asn;
+            my $prefix;
 
-        my $state = $client->{'state'};
-        my $res = APNIC::RPKI::Validator::ROA->validate($state, $asn, $prefix);
+            while (@args) {
+                my $key = shift @args;
+                if ($key eq '--asn') {
+                    $asn = shift @args;
+                } elsif ($key eq '--prefix') {
+                    $prefix = shift @args;
+                } else {
+                    error("Invalid argument '$key'");
+                }
+            }
+            if (not $asn or not $prefix) {
+                error("ASN and prefix must be provided.");
+            }
 
-        if ($res == ROV_UNKNOWN) {
-            print "UNKOWN ROV for $asn $prefix.";
-        } elsif ($res == ROV_INVALID) {
-            print "INVALID ROV for $asn $prefix.";
+            my $state = $client->{'state'};
+            my $res = APNIC::RPKI::Validator::ROA->validate($state, $asn, $prefix);
+
+            if ($res == ROV_UNKNOWN) {
+                print "UNKOWN ROV for $asn $prefix.";
+            } elsif ($res == ROV_INVALID) {
+                print "INVALID ROV for $asn $prefix.";
+            } else {
+                print "VALID ROV for $asn $prefix.";
+            }
+
         } else {
-            print "VALID ROV for $asn $prefix.";
+            error("Unknown operation name '$op_name'");
         }
-
-    } else {
-        error("Unknown operation name '$op_name'");
     }
 }
 
