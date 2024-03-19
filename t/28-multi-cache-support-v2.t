@@ -26,16 +26,6 @@ sub create_server {
 
     $changeset->add_pdu($_) foreach @$pdus;
 
-    # my $ipv4_pdu =
-    # APNIC::RPKI::RTR::PDU::IPv4Prefix->new(
-    #     version       => 1,
-    #     flags         => 1,
-    #     asn           => 4608,
-    #     address       => '1.0.0.0',
-    #     prefix_length => 24,
-    #     max_length    => 32
-    # );
-    # $changeset->add_pdu($ipv4_pdu);
     $mnt->apply_changeset($changeset);
 
     my $port =
