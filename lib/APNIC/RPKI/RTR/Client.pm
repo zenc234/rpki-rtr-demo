@@ -430,17 +430,14 @@ sub serialise_json
 
     my $data = {
         ($self->{'state'}
-            ? (state => $self->{'state'}->serialise_json())
+            ? (state => decode_json($self->{'state'}->serialise_json()))
             : ()),
         ($self->{'eod'}
-            ? (eod => $self->{'eod'}->serialise_json())
+            ? (eod => decode_json($self->{'eod'}->serialise_json()))
             : ()),
         (map {
-            $self->{$_} ? ($_ => $self->{$_}->serialise_json()) : ()
-        } qw(state eod)),
-        (map {
-            $self->{$_} ? ($_ => $self->{$_}) : ()
-        } qw(server port last_run last_failure supported_versions
+            defined $self->{$_} ? ($_ => $self->{$_}) : ()
+        } qw(client_id server port last_run last_failure supported_versions
              sv_lookup max_supported_version)),
     };
     return encode_json($data);
@@ -453,11 +450,15 @@ sub deserialise_json
     my $obj = decode_json($data);
     if ($obj->{'state'}) {
         $obj->{'state'} =
-            APNIC::RPKI::RTR::State->deserialise_json($obj->{'state'});
+            APNIC::RPKI::RTR::State->deserialise_json(
+                encode_json($obj->{'state'})
+            );
     }
     if ($obj->{'eod'}) {
         $obj->{'eod'} =
-            APNIC::RPKI::RTR::PDU::EndOfData->deserialise_json($obj->{'eod'});
+            APNIC::RPKI::RTR::PDU::EndOfData->deserialise_json(
+                encode_json($obj->{'eod'})
+            );
     }
     bless $obj, $class;
     return $obj;
