@@ -5,11 +5,13 @@ use strict;
 
 use Math::BigInt;
 use JSON::XS qw(encode_json decode_json);
+use Hash::Merge;
+use List::MoreUtils qw(uniq);
 
 use APNIC::RPKI::RTR::PDU::IPv4Prefix;
 use APNIC::RPKI::RTR::PDU::IPv6Prefix;
 use APNIC::RPKI::RTR::Utils qw(dprint);
-
+use Data::Dumper;
 my $MAX_SERIAL_NUMBER = Math::BigInt->new(1)->blsft(32)->bsub(1);
 
 sub new
@@ -33,9 +35,9 @@ sub new
     my $self = {
         session_id    => $session_id,
         serial_number => $serial_number,
-        vrps          => $args{vrps},
+        vrps          => $args{'vrps'},
         rks           => {},
-        aspas         => {},
+        aspas         => $args{'aspas'},
     };
     bless $self, $class;
 
@@ -74,16 +76,16 @@ sub apply_changeset
                 $self->{'vrps'}->{$asn}->{$addr}->{$length}->{$max_length} = 1;
             } elsif ($flags == 0) {
                 dprint("state: removing IP prefix: $asn, $addr/$length-$max_length");
-		delete $self->{'vrps'}->{$asn}->{$addr}->{$length}->{$max_length};
-		if (keys %{$self->{'vrps'}->{$asn}->{$addr}->{$length}} == 0) {
-		    delete $self->{'vrps'}->{$asn}->{$addr}->{$length};
-		    if (keys %{$self->{'vrps'}->{$asn}->{$addr}} == 0) {
-			delete $self->{'vrps'}->{$asn}->{$addr};
-			if (keys %{$self->{'vrps'}->{$asn}} == 0) {
-			    delete $self->{'vrps'}->{$asn};
-			}
-		    }
-		}
+                delete $self->{'vrps'}->{$asn}->{$addr}->{$length}->{$max_length};
+                if (keys %{$self->{'vrps'}->{$asn}->{$addr}->{$length}} == 0) {
+                    delete $self->{'vrps'}->{$asn}->{$addr}->{$length};
+                    if (keys %{$self->{'vrps'}->{$asn}->{$addr}} == 0) {
+                        delete $self->{'vrps'}->{$asn}->{$addr};
+                        if (keys %{$self->{'vrps'}->{$asn}} == 0) {
+                            delete $self->{'vrps'}->{$asn};
+                        }
+                    }
+                }
             } else {
                 warn "Unexpected flags value, skipping";
             }
@@ -192,6 +194,65 @@ sub deserialise_json
     my $self = decode_json($data);
     bless $self, $class;
     return $self;
+}
+
+sub merge_state
+{
+    my ($self, $other) = @_;
+
+    my $merged_vrps =
+        ($self->{'vrps'} and $other->{'vrps'})
+            ? Hash::Merge::merge($self->{'vrps'}, $other->{'vrps'})
+            : defined $self->{'vrps'}
+            ? $self->{'vrps'}
+            : defined $other->{'vrps'}
+            ? $other->{'vrps'}
+            : {};
+
+    my $aspas = $self->{'aspas'};
+    my $other_aspas = $other->{'aspas'};
+    my $merged_aspas;
+    # Merge provider asns that exist in both aspas hash.
+    if ($aspas and $other_aspas) {
+        foreach my $customer_asn (sort keys %{$aspas}) {
+            my $provider_asns = $aspas->{$customer_asn};
+            my $other_provider_asns = $other_aspas->{$customer_asn};
+
+            if ($provider_asns and $other_provider_asns) {
+                my @merged_provider_asns = @{$provider_asns};
+                push @merged_provider_asns, @{$other_provider_asns};
+                my @sorted = sort {$a <=> $b} uniq(@merged_provider_asns);
+                $merged_aspas->{$customer_asn} = \@sorted;
+            } elsif ($provider_asns) {
+                my @sorted = sort {$a <=> $b} uniq(@{$provider_asns});
+                $merged_aspas->{$customer_asn} = \@sorted;
+            } else {
+                my @sorted = sort {$a <=> $b} uniq(@{$other_provider_asns});
+                $merged_aspas->{$customer_asn} = \@sorted;
+            }
+        }
+
+        foreach my $customer_asn (sort keys %{$other_aspas}) {
+            # Skip customer asns that have been merged from previous for-loop.
+            # Only add customer asns that exist in '$other_aspas'.
+            if ($aspas->{$customer_asn}) {
+                next;
+            }
+
+            my @sorted = sort {$a <=> $b} uniq(@{$other_aspas->{$customer_asn}});
+            $merged_aspas->{$customer_asn} = \@sorted;
+        }
+    } elsif ($aspas) {
+        $merged_aspas = $aspas;
+    } else {
+        $merged_aspas = $other_aspas;
+    };
+
+    return APNIC::RPKI::RTR::State->new(
+        'session_id' => 1000,
+        'vrps'       => $merged_vrps,
+        'aspas'      => $merged_aspas,
+    );
 }
 
 1;

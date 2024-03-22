@@ -17,7 +17,10 @@ my $output = WriteMakefile(
     EXE_FILES      => [ qw(bin/rpki-rtr-client
                            bin/rpki-rtr-server
                            bin/rpki-rtr-server-mnt) ],
-    PREREQ_PM      => { 'Test::More' => 0 },
+    PREREQ_PM      => {
+        'Test::More'  => 0,
+        'Hash::Merge' => 0,
+    },
 );
 
 1;

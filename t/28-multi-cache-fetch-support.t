@@ -53,6 +53,20 @@ my @servers = (
                 prefix_length => 24,
                 max_length    => 32
             ),
+            APNIC::RPKI::RTR::PDU::ASPA->new(
+                version       => 1,
+                flags         => 1,
+                customer_asn  => 4708,
+                provider_asns => [10, 20, 30],
+                afi_flags     => 1,
+            ),
+            APNIC::RPKI::RTR::PDU::ASPA->new(
+                version       => 1,
+                flags         => 1,
+                customer_asn  => 5000,
+                provider_asns => [11, 22, 33],
+                afi_flags     => 1,
+            ),
         ]
     ),
     create_server(
@@ -64,6 +78,20 @@ my @servers = (
                 address       => '10.0.0.0',
                 prefix_length => 24,
                 max_length    => 32
+            ),
+            APNIC::RPKI::RTR::PDU::ASPA->new(
+                version       => 1,
+                flags         => 1,
+                customer_asn  => 4708,
+                provider_asns => [30, 40, 50, 60],
+                afi_flags     => 1,
+            ),
+            APNIC::RPKI::RTR::PDU::ASPA->new(
+                version       => 1,
+                flags         => 1,
+                customer_asn  => 5001,
+                provider_asns => [11, 22, 33],
+                afi_flags     => 1,
             ),
         ]
     ),
@@ -109,6 +137,14 @@ is_deeply(
     },
     "Correct vrp fetched from cache/server 0."
 );
+is_deeply(
+    $client0_state->{aspas},
+    {
+        "4708" => [10, 20, 30],
+        "5000" => [11, 22, 33],
+    },
+    "Correct aspas fetched from cache/server 0."
+);
 
 my $client1 = APNIC::RPKI::RTR::Client->deserialise_json(
     read_file("$client_data_dir/client1.json")
@@ -126,6 +162,47 @@ is_deeply(
         }
     },
     "Correct vrp fetched from cache/server 1."
+);
+is_deeply(
+    $client1_state->{aspas},
+    {
+        "4708" => [30, 40, 50, 60],
+        "5001" => [11, 22, 33],
+    },
+    "Correct aspas fetched from cache/server 1."
+);
+
+my $aggregated_state = $client0_state->merge_state($client1_state);
+is_deeply(
+    $aggregated_state->{vrps},
+    {
+        "2000" => {
+            "10.0.0.0" => {
+                "24" => {
+                    "32" => 1
+                }
+            }
+        },
+        "4608" => {
+            "1.0.0.0" => {
+                "24" => {
+                    "32" => 1
+                }
+            }
+        }
+    },
+    "Correct merged vrp state."
+);
+
+my $aggregated_state = $client0_state->merge_state($client1_state);
+is_deeply(
+    $aggregated_state->{aspas},
+    {
+        "4708" => [10, 20, 30, 40, 50, 60],
+        "5000" => [11, 22, 33],
+        "5001" => [11, 22, 33],
+    },
+    "Correct merged aspas state."
 );
 
 foreach my $pid (@server_pids) {

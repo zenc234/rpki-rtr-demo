@@ -5,6 +5,7 @@ use strict;
 
 use DateTime;
 use File::Slurp qw(read_file write_file);
+use Hash::Merge;
 
 use APNIC::RPKI::RTR::Client;
 use APNIC::RPKI::Validator::ASPA;
@@ -50,18 +51,38 @@ sub error
 }
 
 sub retrieve_client {
-    my ($data_dir, $client_id) = @_;
+    my ($client_config_path) = @_;
 
-    if ($client_id !~ /^\d+$/) {
-        die "Client id must be numeric.";
+    if (not -e $client_config_path) {
+        die "Invalid client id. $client_config_path does not exist."
     }
 
-    if (not -e "$data_dir/client$client_id.json") {
-        die "Invalid client id. $data_dir/client$client_id.json does not exist."
-    }
-
-    my $client_json = read_file("$data_dir/client$client_id.json");
+    my $client_json = read_file($client_config_path);
     return APNIC::RPKI::RTR::Client->deserialise_json($client_json);
+}
+
+sub merge_all_cache_state {
+    my ($data_dir) = @_;
+
+    opendir my $dir_dh, $data_dir or die "Cannot open directory: $!";
+    my @states =
+        map { $_->{'state'} }
+        map { retrieve_client("$data_dir/$_") }
+        grep { $_ =~ /client\d+.json/ } readdir $dir_dh;
+    closedir $data_dir;
+
+    # No need to aggregate caches if there is only one.
+    if ($#states == 0) {
+        return $states[0];
+    }
+
+    my @vrps_states = map { $_->{'vrps'} } @states;
+    my $aggregated_state = APNIC::RPKI::RTR::State->new('session_id' => 0);
+    for (my $i = 0; $i <= $#vrps_states; $i++) {
+        $aggregated_state = $aggregated_state->merge_state($vrps_states[$i]);
+    }
+
+    return $aggregated_state;
 }
 
 sub main
@@ -174,7 +195,7 @@ sub main
 
             if ($key eq '--client_id' and $i < $#args) {
                 $client_id = $args[$i + 1];
-                $client = retrieve_client($dir, $client_id);
+                $client = retrieve_client("$dir/client$client_id.json");
                 last;
             }
         }
@@ -280,7 +301,15 @@ sub main
                 map { $_ => 1 }
                     split /,/, $provider_asn_str;
 
-            my $state = $client->{'state'};
+            my $state;
+            if ($client) {
+                $state = $client->{'state'};
+            } else {
+                print "No specific cache selected for validation. " .
+                    "Default to merging all caches\n";
+                $state = merge_all_cache_state($dir);
+            }
+
             my $res = APNIC::RPKI::Validator::ASPA::validate(
                 $state, \%provider_asns, $announcement
             );
@@ -309,7 +338,13 @@ sub main
                 error("ASN and prefix must be provided.");
             }
 
-            my $state = $client->{'state'};
+            my $state;
+            if ($client) {
+                $state = $client->{'state'};
+            } else {
+                print "No specific cache selected for validation. Default to merging all caches\n";
+                $state = merge_all_cache_state($dir);
+            }
             my $res = APNIC::RPKI::Validator::ROA->validate($state, $asn, $prefix);
 
             if ($res == ROV_UNKNOWN) {
